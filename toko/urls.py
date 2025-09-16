@@ -1,5 +1,5 @@
 from django.urls import path
-from toko.views import TokoList, TokoDetail, JalurList, AssignJalurM2MView, RemoveJalurFromUserAPIView
+from toko.views import *
 
 urlpatterns = [
     # path('', views.GetAllAndCreated, name='toko'),
@@ -10,4 +10,6 @@ urlpatterns = [
     path('jalur/<int:pk>', JalurList.as_view(), name='jalur-detail'),
     path('jalur/assign/', AssignJalurM2MView.as_view(), name='assign-jalur-to-user'),
     path('jalur/remove/', RemoveJalurFromUserAPIView.as_view(), name='remove-jalur-user'),
+    path("jalur/user/<int:user_id>/", get_user_jalur, name="get_user_jalur"),
+    path("jalur/count", get_jalur_count, name="get_jalur_count"),
  ] 

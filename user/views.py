@@ -9,8 +9,18 @@ from django.contrib.auth.models import Group, User
 from django.shortcuts import get_object_or_404
 from rest_framework.decorators import api_view
 
+from rest_framework_simplejwt.views import TokenObtainPairView
+from user.serializer import CustomTokenObtainPairSerializer
+
+class CustomTokenObtainPairView(TokenObtainPairView):
+    serializer_class = CustomTokenObtainPairSerializer
+
+
 @api_view(['GET'])
 def get_all_sales(request):
+    if not request.user.is_authenticated:
+        return Response({"detail": "Anda tidak memiliki izin untuk mengakses data ini."}, 
+                        status=status.HTTP_401_UNAUTHORIZED)
     count = User.objects.filter(groups__name='sales').count()
     return Response({'count': count})
 
@@ -84,6 +94,12 @@ class AddUserToGroupAPIView(APIView):
     def post(self, request):
         username = request.data.get('username')
         group_name = request.data.get('group')
+        
+        if not request.user.groups.filter(name="admin").exists():
+            return Response(
+                {"detail": "Anda tidak memiliki izin untuk mengakses data ini."},
+                status=status.HTTP_403_FORBIDDEN
+            )
 
         if not username or not group_name:
             return Response({"error": "username and group are required."}, status=status.HTTP_400_BAD_REQUEST)
@@ -100,6 +116,12 @@ class RemoveUserFromGroupAPIView(APIView):
     def post(self, request):
         username = request.data.get('username')
         group_name = request.data.get('group')
+        
+        if not request.user.groups.filter(name="admin").exists():
+            return Response(
+                {"detail": "Anda tidak memiliki izin untuk mengakses data ini."},
+                status=status.HTTP_403_FORBIDDEN
+            )
 
         if not username or not group_name:
             return Response({"error": "username and group are required."}, status=status.HTTP_400_BAD_REQUEST)

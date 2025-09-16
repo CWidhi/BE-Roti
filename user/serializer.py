@@ -4,11 +4,29 @@ from .models import Personal
 from django.db import transaction
 from rest_framework import serializers
 from .models import Personal
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework import serializers
+from rest_framework.exceptions import AuthenticationFailed
 
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    def validate(self, attrs):
+        data = super().validate(attrs)
 
+        user = self.user 
+
+        if not user.groups.filter(name__in=["admin", "sales"]).exists():
+            raise AuthenticationFailed(
+                "Anda tidak memiliki izin untuk mengakses Aplikasi ini (harap hubungi admin)."
+            )
+
+        group = user.groups.first()
+        data['role'] = group.name if group else None 
+
+        return data
+ 
 
 class RegisterSerializer(serializers.ModelSerializer):
-    phone = serializers.CharField(write_only=True, max_length=11)
+    phone = serializers.CharField(write_only=True, max_length=13)
     address = serializers.CharField(write_only=True)
     password = serializers.CharField(write_only=True, min_length=6)
 
@@ -70,7 +88,7 @@ class UserDetailSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['username', 'email', 'phone', 'address', 'first_name', 'last_name', 'groups']
+        fields = ['id', 'username', 'email', 'phone', 'address', 'first_name', 'last_name', 'groups']
     
 
 class GroupSerializer(serializers.ModelSerializer):

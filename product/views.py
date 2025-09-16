@@ -2,10 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from .models import ItemPengambilan, Product, Harga, Stock, Suplier, ProductInSuplier, Belanja, TransaksiPengambilan, TransaksiPembayaran
-from .serializers import (ProductSerializer, HargaSerializer, StockSerializer, HargaProductSerializer,
-                          SuplierSerializer, ProductInSuplierSerializer, BelanjaSerializer, TransaksiPengambilanSerializer,
-                          TransaksiPengambilanReadSerializer, TransaksiPengambilanUpdateSerializer, TransaksiPengambilanDetailSerializer,
-                          BayarSerializer, TransaksiPembayaranSerializer, CicilPembayaranSerializer)
+from .serializers import *
 from rest_framework.views import APIView
 from drf_yasg.utils import swagger_auto_schema
 from django.shortcuts import get_object_or_404
@@ -13,22 +10,40 @@ from rest_framework.generics import UpdateAPIView
 from rest_framework.decorators import api_view
 from django.db.models import Prefetch
 from django.db import transaction
+from rest_framework.permissions import IsAuthenticated
 
 
 @api_view(['GET'])
 def product_count(request):
-    count = Product.objects.count()
+    count = Product.objects.filter(is_delete=False).count()
     return Response({'count': count})
 @api_view(['GET'])
 def suplier_count(request):
     count = Suplier.objects.count()
     return Response({'count': count})
 class ProductViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated]
     queryset = Product.objects.filter(is_delete=False).prefetch_related('harga_list')
     serializer_class = ProductSerializer
     
+    def get_permissions(self):
+        """
+        Hanya user dalam group 'admin' yang boleh POST, PUT, PATCH, DELETE.
+        Selain itu hanya bisa GET (list & retrieve).
+        """
+        if self.action in ["list", "retrieve"]:
+            return [IsAuthenticated()]
+        if self.request.user.groups.filter(name="admin").exists():
+            return [IsAuthenticated()]
+        return []
+    
     @action(detail=True, methods=['post'], url_path='add-harga')
     def add_harga(self, request, pk=None):
+        if not request.user.groups.filter(name="admin").exists():
+            return Response(
+                {"detail": "Anda tidak memiliki izin untuk menambah harga."},
+                status=status.HTTP_403_FORBIDDEN
+            )
         product = self.get_object()
         serializer = HargaProductSerializer(data=request.data)
         if serializer.is_valid():
@@ -41,6 +56,30 @@ class ProductViewSet(viewsets.ModelViewSet):
             serializer.save(product=product)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    def partial_update(self, request, *args, **kwargs):
+        """Hanya admin yang boleh edit produk (PATCH)"""
+        if not request.user.groups.filter(name="admin").exists():
+            return Response(
+                {"detail": "Anda tidak memiliki izin untuk mengedit produk."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        return super().partial_update(request, *args, **kwargs)
+    def destroy(self, request, *args, **kwargs):
+        """Soft delete: ubah is_delete menjadi True"""
+        if not request.user.groups.filter(name="admin").exists():
+            return Response(
+                {"detail": "Anda tidak memiliki izin untuk menghapus produk."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        instance = self.get_object()
+        instance.is_delete = True
+        instance.save()
+        return Response(
+            {"detail": "Produk berhasil dihapus (soft delete)"},
+            status=status.HTTP_200_OK
+        )
+
     
 class HargaViewSet(viewsets.ModelViewSet):
     queryset = Harga.objects.all().order_by('-id')
@@ -83,13 +122,25 @@ class StockDetail(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
 class SuplierList(APIView):
+    permission_classes = [IsAuthenticated]
+    
     @swagger_auto_schema(responses={200: SuplierSerializer(many=True)})
     def get(self, request):
+        if not request.user.groups.filter(name="admin").exists():
+            return Response(
+                {"detail": "Anda tidak memiliki izin untuk akses data ini."},
+                status=status.HTTP_403_FORBIDDEN
+            )
         supliers = Suplier.objects.all().order_by('-id')
         serializer = SuplierSerializer(supliers, many=True)
         return Response(serializer.data)
     
     def post(self, request):
+        if not request.user.groups.filter(name="admin").exists():
+            return Response(
+                {"detail": "Anda tidak memiliki izin untuk akses data ini."},
+                status=status.HTTP_403_FORBIDDEN
+            )
         serializer = SuplierSerializer(data=request.data)
         if serializer.is_valid():
             serializer.save()
@@ -97,6 +148,11 @@ class SuplierList(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     def put(self, request, pk=None):
+        if not request.user.groups.filter(name="admin").exists():
+            return Response(
+                {"detail": "Anda tidak memiliki izin untuk akses data ini."},
+                status=status.HTTP_403_FORBIDDEN
+            )
         try:
             suplier = Suplier.objects.get(pk=pk)
         except Suplier.DoesNotExist:
@@ -112,14 +168,25 @@ class SuplierUpdateView(UpdateAPIView):
     serializer_class = SuplierSerializer
     
 class ProsuctInSuplierView(APIView):
+    permission_classes = [IsAuthenticated]
     
     @swagger_auto_schema(responses={200: ProductInSuplierSerializer(many=True)})
     def get(self, request):
+        if not request.user.groups.filter(name="admin").exists():
+            return Response(
+                {"detail": "Anda tidak memiliki izin untuk akses data ini."},
+                status=status.HTTP_403_FORBIDDEN
+            )
         product_in_suplier = ProductInSuplier.objects.all()
         serializer = ProductInSuplierSerializer(product_in_suplier, many=True)
         return Response(serializer.data)
     
     def post(self, request):
+        if not request.user.groups.filter(name="admin").exists():
+            return Response(
+                {"detail": "Anda tidak memiliki izin untuk akses data ini."},
+                status=status.HTTP_403_FORBIDDEN
+            )
         serializer = ProductInSuplierSerializer(data=request.data)
         if serializer.is_valid():
             serializer.save()
@@ -127,11 +194,21 @@ class ProsuctInSuplierView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     def destroy(self, request, *args, **kwargs):
+        if not request.user.groups.filter(name="admin").exists():
+            return Response(
+                {"detail": "Anda tidak memiliki izin untuk akses data ini."},
+                status=status.HTTP_403_FORBIDDEN
+            )
         product = self.get_object()
         product.delete()
         return Response({"detail": "Produk berhasil dihapus."}, status=status.HTTP_204_NO_CONTENT)
     
     def patch(self, request, pk=None):
+        if not request.user.groups.filter(name="admin").exists():
+            return Response(
+                {"detail": "Anda tidak memiliki izin untuk akses data ini."},
+                status=status.HTTP_403_FORBIDDEN
+            )
         try:
             product = ProductInSuplier.objects.get(pk=pk)
         except ProductInSuplier.DoesNotExist:
@@ -143,14 +220,26 @@ class ProsuctInSuplierView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
 class BelanjaView(APIView):
+    permission_classes = [IsAuthenticated]
+    
     @swagger_auto_schema(responses={200: BelanjaSerializer(many=True)})
     def get(self, request):
+        if not request.user.groups.filter(name="admin").exists():
+            return Response(
+                {"detail": "Anda tidak memiliki izin untuk akses data ini."},
+                status=status.HTTP_403_FORBIDDEN
+            )
         belanja_list = Belanja.objects.all().order_by('-id')
         serializer = BelanjaSerializer(belanja_list, many=True)
         return Response(serializer.data)
 
     @swagger_auto_schema(request_body=BelanjaSerializer, responses={201: BelanjaSerializer})
     def post(self, request):
+        if not request.user.groups.filter(name="admin").exists():
+            return Response(
+                {"detail": "Anda tidak memiliki izin untuk akses data ini."},
+                status=status.HTTP_403_FORBIDDEN
+            )
         serializer = BelanjaSerializer(data=request.data)
         if serializer.is_valid():
             belanja = serializer.save()
@@ -159,6 +248,11 @@ class BelanjaView(APIView):
     
     @swagger_auto_schema(request_body=BelanjaSerializer, responses={200: BelanjaSerializer})
     def put(self, request, pk=None):
+        if not request.user.groups.filter(name="admin").exists():
+            return Response(
+                {"detail": "Anda tidak memiliki izin untuk akses data ini."},
+                status=status.HTTP_403_FORBIDDEN
+            )
         try:
             belanja = Belanja.objects.get(pk=pk)
         except Belanja.DoesNotExist:
