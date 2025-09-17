@@ -237,7 +237,7 @@ class ItemPengambilanCreateSerializer(serializers.ModelSerializer):
         fields = ['product', 'quantity', 'tipe_harga']
         
 class TransaksiPengambilanSerializer(serializers.Serializer):
-    sales = serializers.PrimaryKeyRelatedField(queryset=User.objects.all())
+    # sales = serializers.PrimaryKeyRelatedField(queryset=User.objects.all())
     jalur = serializers.PrimaryKeyRelatedField(queryset=Jalur.objects.all())
     items = ItemPengambilanCreateSerializer(many=True)
 
@@ -247,7 +247,8 @@ class TransaksiPengambilanSerializer(serializers.Serializer):
         return sales_user
 
     def create(self, validated_data):
-        sales = validated_data['sales']
+        request = self.context.get('request')
+        sales = request.user
         jalur = validated_data['jalur']
         items_data = validated_data['items']
 

@@ -265,6 +265,7 @@ class BelanjaView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
  
 class TransaksiPengambilanAPIView(APIView):
+    permission_classes = [IsAuthenticated]
     def post(self, request):
         serializer = TransaksiPengambilanSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
@@ -278,6 +279,11 @@ class TransaksiPengambilanAPIView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     def put(self, request, pk):
+        if not request.user.groups.filter(name="admin").exists():
+            return Response(
+                {"detail": "Anda tidak memiliki izin untuk menambah transaksi pengambilan."},
+                status=status.HTTP_403_FORBIDDEN
+            )
         transaksi = get_object_or_404(TransaksiPengambilan, pk=pk)
         
         serializer = TransaksiPengambilanSerializer(
@@ -292,15 +298,33 @@ class TransaksiPengambilanAPIView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
 class TransaksiPengambilanListView(APIView):
-     def get(self, request):
-        queryset = TransaksiPengambilan.objects.all().select_related('user', 'jalur').prefetch_related(
-            Prefetch('items', queryset=ItemPengambilan.objects.select_related('product'))
-        )
+    permission_classes = [IsAuthenticated]
+    def get(self, request):
+        if request.user.groups.filter(name__in=["admin"]).exists():
+            queryset = TransaksiPengambilan.objects.all().select_related('user', 'jalur').prefetch_related(
+                Prefetch('items', queryset=ItemPengambilan.objects.select_related('product'))
+            ).order_by('-id')
+        elif request.user.groups.filter(name__in=["sales"]).exists():
+            queryset = TransaksiPengambilan.objects.filter(user=request.user).select_related('user', 'jalur').prefetch_related(
+                Prefetch('items', queryset=ItemPengambilan.objects.select_related('product'))
+            ).order_by('-id')
+        else:
+            return Response(
+                {"detail": "Anda tidak memiliki izin untuk mengakses data ini."},
+                status=status.HTTP_403_FORBIDDEN
+            )
         serializer = TransaksiPengambilanReadSerializer(queryset, many=True)
         return Response(serializer.data)
 
 class KonfirmasiTransaksiPengambilanAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    
     def post(self, request, pk):
+        if not request.user.groups.filter(name="admin").exists():
+            return Response(
+                {"detail": "Anda tidak memiliki izin untuk menambah transaksi pengambilan."},
+                status=status.HTTP_403_FORBIDDEN
+            )
         transaksi = get_object_or_404(TransaksiPengambilan, pk=pk)
 
         if transaksi.is_konfirmasi:
@@ -310,21 +334,8 @@ class KonfirmasiTransaksiPengambilanAPIView(APIView):
                 "data": TransaksiPengambilanDetailSerializer(transaksi).data
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        with transaction.atomic():
-            for item in transaksi.items.all():
-                stock = get_object_or_404(Stock, product_id=item.product.id)
-
-                if stock.quantity < item.quantity:
-                    return Response({
-                        "status": False,
-                        "message": f"Stok tidak cukup untuk produk: {item.product.nama}"
-                    }, status=status.HTTP_400_BAD_REQUEST)
-
-                stock.quantity -= item.quantity
-                stock.save()
-
-            transaksi.is_konfirmasi = True
-            transaksi.save()
+        transaksi.is_konfirmasi = True
+        transaksi.save()
 
         return Response({
             "status": True,
