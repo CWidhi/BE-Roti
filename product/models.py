@@ -78,11 +78,18 @@ class TransaksiPengambilan(baseModel):
     is_konfirmasi = models.BooleanField(default=False)
 
 class ItemPengambilan(models.Model):
+    TIPE_ITEM_CHOICES = [
+        ('normal', 'Normal'),
+        ('bs', 'Barang Sisa'),
+        ('retur', 'Retur'),
+    ]
+    
     transaksi = models.ForeignKey(TransaksiPengambilan, on_delete=models.CASCADE, related_name='items')
     product = models.ForeignKey(Product, on_delete=models.CASCADE)
     quantity = models.IntegerField()
     harga_satuan = models.DecimalField(max_digits=10, decimal_places=2)
     subtotal = models.DecimalField(max_digits=12, decimal_places=2)
+    tipe_item = models.CharField(max_length=10, choices=TIPE_ITEM_CHOICES, default='normal')
     def __str__(self):
         return f"{self.product.nama}"
     

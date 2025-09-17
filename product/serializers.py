@@ -350,10 +350,11 @@ class TransaksiPengambilanUpdateSerializer(serializers.Serializer):
     
 class ItemPengambilanUpdateSerializer(serializers.ModelSerializer):
     tipe_harga = serializers.CharField()
+    tipe_item = serializers.ChoiceField(choices=ItemPengambilan.TIPE_ITEM_CHOICES)
     
     class Meta:
         model = ItemPengambilan
-        fields = ['product', 'quantity', 'tipe_harga']
+        fields = ['product', 'quantity', 'tipe_harga', 'tipe_item']
 
 class TransaksiPengambilanUpdateSerializer(serializers.Serializer):
     sales = serializers.PrimaryKeyRelatedField(queryset=User.objects.all())
@@ -374,6 +375,7 @@ class TransaksiPengambilanUpdateSerializer(serializers.Serializer):
         items_data = validated_data['items']
 
         with transaction.atomic():
+            # update header transaksi
             instance.user = sales
             instance.jalur = jalur
             instance.save()
@@ -382,75 +384,108 @@ class TransaksiPengambilanUpdateSerializer(serializers.Serializer):
             existing_items = {item.id: item for item in instance.items.all()}
             request_item_ids = [item.get('id') for item in items_data if item.get('id') is not None]
 
-            # Hapus item yang tidak ada lagi di request
+            # Hapus item yang tidak ada di request
             for item_id, item in existing_items.items():
                 if item_id not in request_item_ids:
                     stock = Stock.objects.select_for_update().get(product_id=item.product.id)
-                    stock.quantity += item.quantity
-                    stock.save()
+
+                    if item.tipe_item == "normal":
+                        stock.quantity += item.quantity
+                        stock.save()
+                    elif item.tipe_item == "retur":
+                        stock.quantity -= item.quantity
+                        stock.save()
+                    # bs -> tidak pengaruhi stok
 
                     ItemPembayaran.objects.filter(item_pengambilan=item).delete()
                     item.delete()
 
+            # Tambah/update item baru
             for item_data in items_data:
                 item_id = item_data.get('id')
                 product = item_data['product']
                 quantity = item_data['quantity']
+                tipe_item = item_data.get('tipe_item', 'normal')
                 tipe_harga = item_data['tipe_harga']
 
+                # Ambil harga sesuai tipe_harga
                 harga = Harga.objects.filter(
                     product=product,
                     tipe_harga=tipe_harga,
                     is_delete=False
-                ).order_by('tipe_harga').first()
+                ).first()
 
-                harga_satuan = harga.harga if harga else 0
-                subtotal = harga_satuan * quantity
+                if not harga:
+                    raise serializers.ValidationError(
+                        f"Harga untuk produk '{product.nama}' dengan tipe '{tipe_harga}' tidak ditemukan."
+                    )
+
+                harga_satuan = harga.harga
+
+                # atur subtotal
+                if tipe_item in ["retur", "bs"]:
+                    subtotal = -(harga_satuan * quantity)
+                else:
+                    subtotal = harga_satuan * quantity
 
                 stock = Stock.objects.select_for_update().get(product_id=product.id)
 
                 if item_id and item_id in existing_items:
-                    # Update item yang sudah ada
+                    # Update item lama
                     item = existing_items[item_id]
                     if item.product.id != product.id:
                         raise serializers.ValidationError("Produk tidak boleh diganti pada item yang sudah ada.")
 
                     selisih = quantity - item.quantity
-                    if selisih > 0 and stock.quantity < selisih:
-                        raise serializers.ValidationError(
-                            f"Stok tidak mencukupi untuk produk '{product.nama}'. Sisa stok: {stock.quantity}"
-                        )
 
-                    stock.quantity -= selisih
-                    stock.save()
+                    if tipe_item == "normal":
+                        if selisih > 0 and stock.quantity < selisih:
+                            raise serializers.ValidationError(
+                                f"Stok tidak mencukupi untuk produk '{product.nama}'. Sisa stok: {stock.quantity}"
+                            )
+                        stock.quantity -= selisih
+                        stock.save()
+                    elif tipe_item == "retur":
+                        stock.quantity += selisih
+                        stock.save()
+                    # bs -> stok tidak berubah
 
                     item.quantity = quantity
                     item.harga_satuan = harga_satuan
                     item.subtotal = subtotal
+                    item.tipe_item = tipe_item
                     item.save()
+
                 else:
                     # Tambah item baru
-                    if stock.quantity < quantity:
-                        raise serializers.ValidationError(
-                            f"Stok tidak mencukupi untuk produk '{product.nama}'. Sisa stok: {stock.quantity}"
-                        )
+                    if tipe_item == "normal":
+                        if stock.quantity < quantity:
+                            raise serializers.ValidationError(
+                                f"Stok tidak mencukupi untuk produk '{product.nama}'. Sisa stok: {stock.quantity}"
+                            )
+                        stock.quantity -= quantity
+                        stock.save()
+                    elif tipe_item == "retur":
+                        stock.quantity += quantity
+                        stock.save()
+                    # bs -> stok tidak berubah
 
                     ItemPengambilan.objects.create(
                         transaksi=instance,
                         product=product,
                         quantity=quantity,
                         harga_satuan=harga_satuan,
-                        subtotal=subtotal
+                        subtotal=subtotal,
+                        tipe_item=tipe_item
                     )
-                    stock.quantity -= quantity
-                    stock.save()
 
                 total_pengambilan += subtotal
 
+            # Simpan total akhir transaksi
             instance.total_pengambilan = total_pengambilan
             instance.save()
 
-            # Transaksi Pembayaran
+            # Sinkronisasi pembayaran
             transaksi_pembayaran, _ = TransaksiPembayaran.objects.get_or_create(
                 user=sales,
                 jalur=jalur,
@@ -465,7 +500,7 @@ class TransaksiPengambilanUpdateSerializer(serializers.Serializer):
                 transaksi_pembayaran.total_pengambilan = total_pengambilan
                 transaksi_pembayaran.save()
 
-            # Update ulang ItemPembayaran
+            # Update ulang item pembayaran
             transaksi_pembayaran.items.all().delete()
             for item in instance.items.all():
                 ItemPembayaran.objects.create(
